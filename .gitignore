@@ -1,0 +1,5 @@
+# local tooling and personal notes (not part of the game)
+.claude/
+project-log*.md
+change-log.md
+backups/
