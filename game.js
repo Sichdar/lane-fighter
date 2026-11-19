@@ -1063,7 +1063,7 @@ function drawTitle() {
     { text: 'Pick the right gates to grow your squad,', y: 400, size: 20 },
     { text: 'shoot down the goblins, then slay the troll.', y: 430, size: 20 },
     { text: 'Arrows make a + or − gate better.', y: 478, size: 18, color: '#1f4fa8' },
-    { text: 'Mouse / drag / ← → to move', y: 520, size: 18, color: '#6b5a44' },
+    { text: 'Drag left / right (or ← →) to move', y: 520, size: 18, color: '#6b5a44' },
     { text: 'TAP TO MARCH', y: 620, size: 34, weight: '900', title: true, color: `rgba(122,31,31,${pulse})` },
     { text: state.best > 0 ? 'Best: level ' + state.best : '', y: 690, size: 18, color: '#6b5a44' },
   ]);
@@ -1110,14 +1110,25 @@ function tryStart() {
   else if (state.mode === 'over' && state.modeTimer > 0.8) newGame();
 }
 
+// Drag-only steering: the squad moves by how far the finger/mouse travels while held down,
+// from wherever the drag starts. A tap or click on its own never moves it.
+let dragPointer = null, dragLastX = 0;
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
-  state.targetX = toLogicalX(e.clientX);
+  dragPointer = e.pointerId;
+  dragLastX = toLogicalX(e.clientX);
   tryStart();
 });
 canvas.addEventListener('pointermove', e => {
-  if (e.pointerType === 'mouse' || e.buttons) state.targetX = toLogicalX(e.clientX);
+  if (e.pointerId !== dragPointer) return;
+  const x = toLogicalX(e.clientX);
+  const sr = squadRadius();
+  state.targetX = clamp(state.targetX + (x - dragLastX), ROAD_L + sr, ROAD_R - sr);
+  dragLastX = x;
 });
+const endDrag = e => { if (e.pointerId === dragPointer) dragPointer = null; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
 window.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
   else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
