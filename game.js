@@ -68,6 +68,57 @@ function saveStars(a) {
   try { localStorage.setItem('laneFighterStars', JSON.stringify(a)); } catch (e) { /* ignore */ }
 }
 
+// ---- the camp: gold and upgrades between runs (Phase 3) ---------------------------
+// Each upgrade: what it does per level, max level, and a cost that grows each level.
+const UPGRADES = [
+  { id: 'recruits', name: 'Recruits', max: 10, base: 15, grow: 1.35,
+    text: lv => '+' + 2 * lv + ' archers at the start' },
+  { id: 'arrows', name: 'Sharp Arrows', max: 10, base: 20, grow: 1.38,
+    text: lv => '+' + 5 * lv + '% arrow damage' },
+  { id: 'draw', name: 'Quick Draw', max: 10, base: 20, grow: 1.38,
+    text: lv => '+' + 4 * lv + '% shots per second' },
+  { id: 'gates', name: 'Gate Craft', max: 5, base: 25, grow: 1.5,
+    text: lv => 'Gates improve ' + 10 * lv + '% faster' },
+];
+function loadCamp() {
+  const c = { gold: 0, lv: {} };
+  try {
+    const s = JSON.parse(localStorage.getItem('laneFighterCamp') || '{}');
+    c.gold = Math.max(0, s.gold | 0);
+    for (const u of UPGRADES) c.lv[u.id] = clamp((s.lv && s.lv[u.id]) | 0, 0, u.max);
+  } catch (e) { for (const u of UPGRADES) c.lv[u.id] = 0; }
+  return c;
+}
+function saveCamp() {
+  try { localStorage.setItem('laneFighterCamp', JSON.stringify(state.camp)); } catch (e) { /* ignore */ }
+}
+function upLv(id) { return state.camp.lv[id] || 0; }
+function upCost(u) { return Math.round(u.base * Math.pow(u.grow, upLv(u.id))); }
+function buyUpgrade(u) {
+  const lv = upLv(u.id);
+  const cost = upCost(u);
+  if (lv >= u.max || state.camp.gold < cost) return;
+  state.camp.gold -= cost;
+  state.camp.lv[u.id] = lv + 1;
+  saveCamp();
+}
+function startBonus() { return 2 * upLv('recruits'); }
+function arrowMul() { return 1 + 0.05 * upLv('arrows'); }
+function drawMul() { return 1 + 0.04 * upLv('draw'); }
+function gateMul() { return 1 + 0.1 * upLv('gates'); }
+
+// Gold earned in a run is collected as it comes and put in the camp's chest when the run ends.
+// Endless hordes are much bigger, so a slain foe pays less there.
+const GOLD = { perKill: 0.1, perKillEndless: 0.015, chest: 5, wave: 6, win: 10, winPerLevel: 3, newStar: 15 };
+function addGold(n) { state.runGold += n; }
+function bankGold() {
+  const g = Math.floor(state.runGold);
+  state.runGold = 0;
+  state.lastGold = g;
+  if (g > 0) { state.camp.gold += g; saveCamp(); }
+  return g;
+}
+
 // ---- campaign: hand-made challenge levels ----------------------------------------
 // Each stretch: [horde size, left gate, right gate, extra]. Gates: '+8', '-5', 'x2', '/2';
 // null = no gates. Extra 'c' = a treasure chest after the gates.
@@ -190,24 +241,40 @@ function line(g, c, lw, x0, y0, x1, y1) {
   g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
 }
 
-// Archer, seen from behind (24 x 34)
+// Archer, seen from behind, drawing a bow (28 x 36): hooded, tall thin bow held out
+// on the left arm, string pulled back to the cheek with an arrow on it, quiver on the back.
 function drawArcher(g, f) {
   const a = f ? 1.6 : 0, b = f ? 0 : 1.6;
-  rect(g, '#3b2a1a', 8, 25, 3, 8 - a); rect(g, '#3b2a1a', 13, 25, 3, 8 - b);
-  rect(g, '#1f150b', 8, 31 - a, 3, 2); rect(g, '#1f150b', 13, 31 - b, 3, 2);
-  rect(g, '#23509a', 3.5, 15, 3.5, 8); rect(g, '#23509a', 17, 15, 3.5, 8);
-  circ(g, 5.2, 23.5, 1.6, '#e8b98a'); circ(g, 18.8, 23.5, 1.6, '#e8b98a');
-  poly(g, '#2a5db0', [6.5, 14, 17.5, 14, 19, 27, 5, 27]);
-  rect(g, '#5a3a1a', 5.6, 21, 12.8, 2);
-  rect(g, '#7a4a22', 13.5, 9, 4, 12);
-  line(g, '#f2f2f2', 1.2, 14.5, 9, 14, 6.5); line(g, '#f2f2f2', 1.2, 16.5, 9, 17.5, 6.5);
-  circ(g, 12, 9, 5.2, '#a7b0ba');
-  rect(g, '#7d8792', 6.8, 10.4, 10.4, 1.6);
-  rect(g, '#d5dce3', 11.4, 4, 1.2, 6);
-  g.strokeStyle = '#6b3f1d'; g.lineWidth = 1.7;
-  g.beginPath(); g.arc(10, 17, 9.5, Math.PI - 1.0, Math.PI + 1.0); g.stroke();
-  const bx = 10 - 9.5 * Math.cos(1.0), by = 9.5 * Math.sin(1.0);
-  line(g, '#efe6cc', 0.6, bx, 17 - by, bx, 17 + by);
+  // legs and boots
+  rect(g, '#3b2a1a', 11, 27, 3, 8 - a); rect(g, '#3b2a1a', 16, 27, 3, 8 - b);
+  rect(g, '#1f150b', 11, 33 - a, 3, 2); rect(g, '#1f150b', 16, 33 - b, 3, 2);
+  // quiver on the back, arrows sticking out over the right shoulder
+  line(g, '#7a4a22', 3.6, 20.5, 12, 16.5, 25);
+  line(g, '#f2f2f2', 1.1, 20.5, 11.5, 21.5, 8.5); line(g, '#f2f2f2', 1.1, 22.3, 12.3, 23.8, 9.6);
+  // tunic and belt
+  poly(g, '#2a5db0', [9.5, 16, 20.5, 16, 22, 29, 8, 29]);
+  rect(g, '#5a3a1a', 8.6, 24, 12.8, 2);
+  // right arm: elbow up and out, hand drawn back to the cheek
+  line(g, '#23509a', 3, 20, 17, 23.5, 13); line(g, '#23509a', 3, 23.5, 13, 17.5, 11.5);
+  // left arm stretched out holding the bow
+  line(g, '#23509a', 3, 10, 17, 4.5, 14.5);
+  // bow: tall, thin, curved away from the archer, with curled tips
+  g.strokeStyle = '#8b5a2b'; g.lineWidth = 1.5; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(5, 0.5); g.quadraticCurveTo(-1.5, 14.5, 5, 28.5); g.stroke();
+  line(g, '#8b5a2b', 1.1, 5, 0.5, 6.4, 1.2); line(g, '#8b5a2b', 1.1, 5, 28.5, 6.4, 27.8);
+  // string pulled back in a V
+  line(g, '#efe6cc', 0.55, 5.6, 0.9, 17, 11.5); line(g, '#efe6cc', 0.55, 17, 11.5, 5.6, 28.1);
+  // arrow on the string, head past the bow
+  line(g, '#d9c08a', 0.9, 17, 11.5, 0.5, 14);
+  poly(g, '#c9d1d8', [-0.8, 14.2, 2.2, 12.6, 2, 15.1]);
+  poly(g, '#e85a3a', [17.5, 11.4, 15, 10.4, 15.6, 12]); poly(g, '#e85a3a', [17.5, 11.6, 15.2, 13.2, 15.4, 11.7]);
+  // hands
+  circ(g, 3.6, 14.5, 1.6, '#e8b98a'); circ(g, 17.3, 11.5, 1.5, '#e8b98a');
+  // hood with a pointed tip
+  circ(g, 15, 10, 5.3, '#5b4a2e');
+  poly(g, '#5b4a2e', [11.3, 7, 15.3, 0.8, 18.8, 7]);
+  poly(g, '#5b4a2e', [10.5, 13, 19.5, 13, 21, 17, 9, 17]);
+  line(g, '#4a3b23', 0.8, 15, 5, 15, 14);
 }
 
 // Goblin, facing the squad (22 x 26)
@@ -286,7 +353,7 @@ function drawOak(g) {
 }
 
 const SPR = {
-  archer: [makeSprite(24, 34, g => drawArcher(g, 0)), makeSprite(24, 34, g => drawArcher(g, 1))],
+  archer: [makeSprite(28, 36, g => drawArcher(g, 0)), makeSprite(28, 36, g => drawArcher(g, 1))],
   goblin: [makeSprite(22, 26, g => drawGoblin(g, 0)), makeSprite(22, 26, g => drawGoblin(g, 1))],
   orc: [makeSprite(38, 42, g => drawOrc(g, 0)), makeSprite(38, 42, g => drawOrc(g, 1))],
   troll: [makeSprite(120, 130, g => drawTroll(g, 0)), makeSprite(120, 130, g => drawTroll(g, 1))],
@@ -330,6 +397,10 @@ const state = {
   campIdx: 0,             // campaign level being played (0-based)
   spec: null,             // campaign level data, or null in endless
   stars: loadStars(),
+  camp: null,             // gold and upgrade levels, loaded below
+  campBack: null,         // where the camp's Back button goes
+  runGold: 0,             // gold collected in the current run
+  lastGold: 0,            // gold banked at the end of the last run
   stats: { red: 0, chests: 0, chestsTotal: 0, bitten: 0 },
   result: null,           // campaign result screen data
   paused: false,
@@ -358,11 +429,12 @@ const state = {
   best: loadBest(),
   kills: 0,
 };
+state.camp = loadCamp();
 window.__game = state; // handy for debugging in the browser console
 
 function visibleCount() { return Math.min(state.squad, MAX_VISIBLE); }
 function squadRadius() { return 7.5 * Math.sqrt(Math.max(visibleCount() - 1, 0)) + 9; }
-function soldierDps() { return 1.5 * (1 + 0.35 * (state.weapon - 1)); }
+function soldierDps() { return 1.5 * (1 + 0.35 * (state.weapon - 1)) * arrowMul(); }
 
 // Forest on both sides of the road; trees scroll and wrap around.
 const TREE_NEAR = 1150;
@@ -397,10 +469,15 @@ const STRETCH_CHEST = 9.2;    // a stretch with a chest is a bit longer
 // a player who picks the wrong gate 1 time in 5 about wave 8, random play wave 2.
 const ENDLESS = {
   pressure0: 0.2,     // horde strength vs the expected squad's firepower, wave 1
-  pressureStep: 0.08, // added every wave
+  pressureStep: 0.095, // added every wave (0.08 until 20/11/2026: "slightly harder")
   squadStep: 110,     // expected squad growth per wave (good play)
   window: 4,          // seconds of shooting a horde gets before it arrives
 };
+// Extra toughness per campaign level (foes' and troll's health), on top of the numbers above.
+// 20/11/2026, Fabio: "slightly harder". Levels 3, 6 and 10 were already tight for perfect play
+// without upgrades, so they stay about the same; the rest get 20-25% tougher.
+const TOUGH = { campaign: [1.25, 1.25, 1.0, 1.25, 1.2, 1.0, 1.2, 1.2, 1.25, 1.05] };
+function toughness() { return TOUGH.campaign[state.campIdx] || 1; }
 function expectedSquad(L) { return Math.min(MAX_SQUAD, 15 + ENDLESS.squadStep * (L - 1)); }
 function expectedBows(L) { return 1 + 0.35 * (Math.min(MAX_WEAPON, 1 + 0.8 * (L - 1)) - 1); }
 function expectedFire(L) { return expectedSquad(L) * 1.5 * expectedBows(L); }
@@ -462,9 +539,10 @@ function startLevel() {
 }
 
 function freshRun(squad, weapon) {
-  state.squad = squad;
+  state.squad = squad + startBonus();
   state.weapon = weapon;
   state.kills = 0;
+  state.runGold = 0;
   state.stats = { red: 0, chests: 0, chestsTotal: 0, bitten: 0 };
   state.squadX = state.targetX = MID;
   state.particles.length = 0;
@@ -534,7 +612,7 @@ function spawnHorde(size, stretch) {
   const L = state.level;
   const share = bruteShare();
   const fast = (state.spec && state.spec.speed) || 1;
-  let base = state.spec && state.spec.hp ? state.spec.hp : (1.5 + L * 0.8) * Math.pow(1.22, L - 1);
+  let base = state.spec && state.spec.hp ? state.spec.hp * toughness() :(1.5 + L * 0.8) * Math.pow(1.22, L - 1);
   if (stretch !== undefined) {
     // endless: size and health from the wave's pressure (see ENDLESS)
     size = Math.min(150, 12 + 6 * L + 4 * stretch);
@@ -568,7 +646,7 @@ function spawnCrate() {
 function spawnBoss() {
   const L = state.level;
   // endless: about (4 + 0.6 x wave) seconds of the expected squad's full fire
-  const hp = state.spec ? state.spec.troll : Math.round((4 + 0.6 * L) * expectedFire(L));
+  const hp = state.spec ? Math.round(state.spec.troll * toughness()) :Math.round((4 + 0.6 * L) * expectedFire(L));
   state.boss = { x: MID, y: SPAWN_Y - 60, r: 64, hp, maxHp: hp, speed: 80, hit: 0 };
   floater(MID, 380, 'THE TROLL COMES!', '#ff6b4a', 34, 1.6, true);
 }
@@ -592,7 +670,9 @@ function finishCampaign(won) {
     for (let i = 0; i < CAMPAIGN.length; i++) state.stars[i] = state.stars[i] || 0;
     saveStars(state.stars);
   }
-  state.result = { won, stars, goals, newBest: stars > prev };
+  if (won) addGold(GOLD.win + GOLD.winPerLevel * state.campIdx + GOLD.newStar * Math.max(0, stars - prev));
+  const gold = bankGold();
+  state.result = { won, stars, goals, newBest: stars > prev, gold };
 }
 
 // ---- effects ----------------------------------------------------------------
@@ -643,7 +723,7 @@ function applyGate(g) {
 // into a jackpot. In endless a bigger squad also pays more per step.
 function gateThreshold(g) {
   const big = state.run === 'endless' ? 1 + state.squad / 60 : 1;
-  return (8 + state.level * 4) * (1 + 0.15 * (g.steps || 0)) * big;
+  return (8 + state.level * 4) * (1 + 0.15 * (g.steps || 0)) * big / gateMul();
 }
 function hitGate(g, dmg) {
   g.acc += dmg;
@@ -738,7 +818,7 @@ function update(dt) {
     if (targets.length > 8) targets.length = 8;
     if (!targets.length && state.boss && state.boss.y > ARROW_END_Y) targets.push(state.boss);
     const dmg = soldierDps() * FIRE_INTERVAL * (state.squad / vis);
-    state.fireAcc += dt * vis / FIRE_INTERVAL;
+    state.fireAcc += dt * vis / FIRE_INTERVAL * drawMul();
     while (state.fireAcc >= 1) {
       state.fireAcc -= 1;
       const f = FORMATION[randInt(0, vis - 1)];
@@ -826,6 +906,8 @@ function update(dt) {
         const bonus = 5 + state.level * 2;
         state.squad = Math.min(state.squad + bonus, MAX_SQUAD);
         floater(state.squadX, SQUAD_Y - 100, '+' + bonus + ' recruits', '#9dffb0', 24, 2);
+        addGold(GOLD.wave);
+        floater(state.squadX, SQUAD_Y - 130, '+' + GOLD.wave + ' gold', '#ffe066', 22, 2);
         if (state.level > state.best) { state.best = state.level; saveBest(state.best); }
       }
     }
@@ -840,6 +922,7 @@ function update(dt) {
       state.mode = 'result';
     } else {
       state.mode = 'over';
+      bankGold();
       const reached = state.level - 1;
       if (reached > state.best) { state.best = reached; saveBest(state.best); }
     }
@@ -872,6 +955,8 @@ function updateBullets(dt) {
           burst(c.x, c.y, '#8a5a2b', 14, 220);
           burst(c.x, c.y, '#f4d35e', 10, 180);
           state.stats.chests += 1;
+          addGold(GOLD.chest);
+          floaterWorld(c.x, c.y + 40, '+' + GOLD.chest + ' gold', '#ffe066', 20, 1.2);
           if (state.weapon < MAX_WEAPON) {
             state.weapon += 1;
             floaterWorld(c.x, c.y, 'BETTER BOWS!', '#ffd84a', 24, 1.4);
@@ -905,6 +990,8 @@ function updateBullets(dt) {
         e.hp -= bl.dmg; e.hit = 0.06; bl.dead = true;
         if (e.hp <= 0) {
           state.kills += 1;
+          const pk = state.run === 'endless' ? GOLD.perKillEndless : GOLD.perKill;
+          addGold(e.brute ? pk * 5 : pk);
           burst(e.x, e.y, e.brute ? '#4a6b30' : '#6fae45', e.brute ? 10 : 5, 150);
         }
         break;
@@ -970,6 +1057,7 @@ function draw() {
   else if (m === 'brief') drawBrief();
   else if (m === 'over') drawGameOver();
   else if (m === 'result') drawResult();
+  else if (m === 'camp') drawCamp();
 }
 
 function drawGround() {
@@ -1333,6 +1421,19 @@ function drawStar(cx, cy, r, filled, color) {
 function unlocked(i) { return i === 0 || (state.stars[i - 1] || 0) > 0; }
 function totalStars() { return state.stars.reduce((a, b) => a + (b || 0), 0); }
 
+// Leaving a run early (pause → Quit) still keeps the gold collected so far.
+function quitRun() {
+  bankGold();
+  if (state.run === 'campaign') goToMap(); else goToTitle();
+}
+function openCamp(back) {
+  state.campBack = back;
+  state.mode = 'camp';
+  state.modeTimer = 0;
+  state.paused = false;
+  resetField();
+  state.squad = 0;
+}
 function goToMap() {
   state.mode = 'map';
   state.modeTimer = 0;
@@ -1367,7 +1468,8 @@ function drawMap() {
     { text: 'THE CAMPAIGN', y: 118, size: 34, weight: '900', title: true, color: '#7a1f1f' },
     { text: '★ ' + totalStars() + ' / ' + CAMPAIGN.length * 3, y: 156, size: 20, weight: 'bold', color: '#7a5210' },
   ]);
-  button(W / 2 - 70, 856, 140, 46, 'Back', goToTitle, null, 20);
+  button(W / 2 - 150, 856, 140, 46, 'Back', goToTitle, null, 20);
+  button(W / 2 + 10, 856, 140, 46, 'Camp', () => openCamp(goToMap), null, 20);
   // the winding road between the stops
   ctx.strokeStyle = 'rgba(122,82,48,0.55)';
   ctx.lineWidth = 6;
@@ -1420,7 +1522,7 @@ function drawBrief() {
   drawLines([
     { text: 'LEVEL ' + (i + 1), y: 252, size: 22, weight: 'bold', color: '#6b5a44' },
     { text: spec.name, y: 294, size: 36, weight: '900', title: true, color: '#7a1f1f' },
-    { text: 'Start: ' + spec.start + ' archers' + (spec.weapon > 1 ? ', bows ' + spec.weapon : ''), y: 340, size: 18, color: '#6b5a44' },
+    { text: 'Start: ' + (spec.start + startBonus()) + ' archers' + (spec.weapon > 1 ? ', bows ' + spec.weapon : ''), y: 340, size: 18, color: '#6b5a44' },
   ]);
   const lines = ['Slay the troll'].concat(spec.goals.map(g => GOALS[g.type].text(g)));
   ctx.textBaseline = 'middle';
@@ -1463,25 +1565,111 @@ function drawResult() {
     ctx.fillStyle = '#3b2614';
     ctx.fillText(l.text, 106, y + 1);
   });
-  if (res.newBest && res.won) drawLines([{ text: 'New best!', y: 556, size: 18, weight: 'bold', color: '#7a5210' }]);
+  drawGoldLine('+' + res.gold + ' gold' + (res.newBest && res.won ? '   ·   New best!' : ''), 556, 19);
   if (!ready) return;
   const i = state.campIdx;
   const hasNext = res.won && i + 1 < CAMPAIGN.length;
+  const back = () => openBrief(hasNext ? i + 1 : i);
   if (hasNext) {
     button(130, 590, 280, 66, 'NEXT LEVEL', () => openBrief(i + 1), 'main', 28);
-    button(90, 676, 170, 50, 'Retry', () => startCampaign(i), null, 20);
+    button(62, 676, 134, 50, 'Retry', () => startCampaign(i), null, 20);
   } else {
     button(130, 590, 280, 66, 'RETRY', () => startCampaign(i), 'main', 28);
-    button(90, 676, 170, 50, res.won ? 'Retry' : 'Briefing', res.won ? () => startCampaign(i) : () => openBrief(i), null, 20);
+    button(62, 676, 134, 50, res.won ? 'Retry' : 'Briefing', res.won ? () => startCampaign(i) : () => openBrief(i), null, 20);
   }
-  button(280, 676, 170, 50, 'Map', goToMap, null, 20);
+  button(203, 676, 134, 50, 'Camp', () => openCamp(back), null, 20);
+  button(344, 676, 134, 50, 'Map', goToMap, null, 20);
+}
+
+// A small gold coin.
+function drawCoin(cx, cy, r) {
+  ctx.fillStyle = '#e0b030';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#7a5210'; ctx.lineWidth = Math.max(1.2, r * 0.18); ctx.stroke();
+  ctx.fillStyle = '#ffe9a0';
+  ctx.beginPath(); ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.35, 0, Math.PI * 2); ctx.fill();
+}
+// A centred line of text with a coin in front of it.
+function drawGoldLine(text, y, size, color) {
+  ctx.font = 'bold ' + size + 'px ' + FONT_UI;
+  const w = ctx.measureText(text).width;
+  const x = W / 2 - w / 2 + size * 0.6;
+  drawCoin(x - size * 0.75, y, size * 0.48);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = color || '#7a5210';
+  ctx.fillText(text, x, y + 1);
+}
+
+// The camp: spend gold on upgrades that last for every run.
+function drawCamp() {
+  drawParchment(24, 60, W - 48, H - 100);
+  drawLines([
+    { text: 'THE CAMP', y: 112, size: 38, weight: '900', title: true, color: '#7a1f1f' },
+    { text: 'Upgrades last for every run', y: 150, size: 17, color: '#6b5a44' },
+  ]);
+  drawGoldLine(state.camp.gold + ' gold', 190, 24, '#7a5210');
+  UPGRADES.forEach((u, k) => {
+    const y = 226 + k * 150;
+    const lv = upLv(u.id);
+    const maxed = lv >= u.max;
+    const cost = upCost(u);
+    const afford = !maxed && state.camp.gold >= cost;
+    ctx.fillStyle = 'rgba(122,82,48,0.12)';
+    roundRect(46, y, W - 92, 136, 12);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 24px ' + FONT_TITLE;
+    ctx.fillStyle = '#3b2614';
+    ctx.fillText(u.name, 64, y + 28);
+    ctx.font = '17px ' + FONT_UI;
+    ctx.fillStyle = '#6b5a44';
+    ctx.fillText(lv > 0 ? 'Now: ' + u.text(lv) : 'Not bought yet', 64, y + 60);
+    ctx.fillStyle = '#2e5e2e';
+    ctx.fillText(maxed ? 'Fully upgraded' : 'Next: ' + u.text(lv + 1), 64, y + 86);
+    // level pips
+    for (let p = 0; p < u.max; p++) {
+      ctx.fillStyle = p < lv ? '#e0b030' : 'rgba(122,82,48,0.25)';
+      roundRect(64 + p * 22, y + 108, 17, 10, 3);
+      ctx.fill();
+    }
+    // buy button
+    const bx = W - 46 - 150, by = y + 34, bw = 136, bh = 66;
+    if (maxed) {
+      ctx.font = '900 20px ' + FONT_TITLE;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#7a5210';
+      ctx.fillText('MAX', bx + bw / 2, by + bh / 2);
+    } else {
+      buttons.push({ x: bx, y: by, w: bw, h: bh, action: () => buyUpgrade(u) });
+      ctx.fillStyle = afford ? '#8a2323' : '#c9b48c';
+      roundRect(bx, by, bw, bh, 12);
+      ctx.fill();
+      ctx.strokeStyle = afford ? '#e0b030' : '#9a8566';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.font = '900 20px ' + FONT_TITLE;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = afford ? '#fff2c8' : '#7d6a50';
+      ctx.fillText('BUY', bx + bw / 2, by + 22);
+      ctx.font = 'bold 18px ' + FONT_UI;
+      const t = String(cost);
+      const tw = ctx.measureText(t).width;
+      drawCoin(bx + bw / 2 - tw / 2 - 8, by + 46, 8);
+      ctx.fillStyle = afford ? '#ffe9a8' : '#7d6a50';
+      ctx.textAlign = 'left';
+      ctx.fillText(t, bx + bw / 2 - tw / 2 + 4, by + 47);
+    }
+  });
+  button(W / 2 - 80, 836, 160, 50, 'Back', () => (state.campBack || goToTitle)(), null, 22);
 }
 
 function drawPause() {
   drawParchment(90, 320, 360, 330);
   drawLines([{ text: 'PAUSED', y: 380, size: 40, weight: '900', title: true, color: '#7a1f1f' }]);
   button(140, 430, 260, 70, 'RESUME', () => { state.paused = false; }, 'main', 30);
-  button(170, 530, 200, 56, 'Quit', state.run === 'campaign' ? goToMap : goToTitle, null, 22);
+  button(170, 530, 200, 56, 'Quit', quitRun, null, 22);
 }
 
 function drawParchment(x, y, w, h) {
@@ -1511,7 +1699,7 @@ function drawLines(lines) {
 }
 
 function drawTitle() {
-  drawParchment(40, 170, 460, 640);
+  drawParchment(40, 150, 460, 720);
   drawLines([
     { text: 'LANE FIGHTER', y: 240, size: 50, weight: '900', title: true, color: '#7a1f1f' },
     { text: 'Lead your archers up the forest road.', y: 306, size: 20 },
@@ -1524,6 +1712,8 @@ function drawTitle() {
   drawLines([{ text: '★ ' + totalStars() + ' / ' + CAMPAIGN.length * 3 + ' stars', y: 588, size: 17, color: '#7a5210' }]);
   button(110, 622, 320, 64, 'ENDLESS', startEndless, null, 28);
   drawLines([{ text: state.best > 0 ? 'Best: wave ' + state.best + ' cleared' : 'How far can you march?', y: 712, size: 17, color: '#6b5a44' }]);
+  button(110, 742, 320, 60, 'CAMP', () => openCamp(goToTitle), null, 26);
+  drawGoldLine(state.camp.gold + ' gold to spend', 830, 17);
 }
 
 function drawGameOver() {
@@ -1534,9 +1724,11 @@ function drawGameOver() {
     { text: 'Foes slain: ' + state.kills, y: 430, size: 20, color: '#6b5a44' },
     { text: state.best > 0 ? 'Best: wave ' + state.best + ' cleared' : '', y: 465, size: 20, color: '#6b5a44' },
   ]);
+  drawGoldLine('+' + state.lastGold + ' gold', 500, 20);
   if (state.modeTimer < 0.8) return;
-  button(110, 530, 320, 70, 'MARCH AGAIN', startEndless, 'main', 28);
-  button(170, 620, 200, 54, 'Menu', goToTitle, null, 22);
+  button(110, 540, 320, 70, 'MARCH AGAIN', startEndless, 'main', 28);
+  button(110, 628, 150, 54, 'Camp', () => openCamp(goToTitle), null, 22);
+  button(280, 628, 150, 54, 'Menu', goToTitle, null, 22);
 }
 
 function bar(x, y, w, h, p, color) {
@@ -1609,6 +1801,7 @@ window.addEventListener('keydown', e => {
     if (state.mode === 'play') state.paused = !state.paused;
     else if (state.mode === 'brief') goToMap();
     else if (state.mode === 'map') goToTitle();
+    else if (state.mode === 'camp') (state.campBack || goToTitle)();
   }
 });
 window.addEventListener('keyup', e => {
